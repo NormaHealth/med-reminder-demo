@@ -6,6 +6,7 @@ import { ReminderList } from './components/ReminderList';
 import { ScheduleList } from './components/ScheduleList';
 import { AdherenceSection } from './components/AdherenceSection';
 import { ChallengeStatus } from './components/ChallengeStatus';
+import { Clock } from './components/Clock';
 
 export default function App() {
   const [users, setUsers] = useState<User[]>([]);
@@ -16,6 +17,7 @@ export default function App() {
   const [loadingReminders, setLoadingReminders] = useState(false);
   const [loadingSchedules, setLoadingSchedules] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [simulatedNow, setSimulatedNow] = useState<Date>(() => new Date());
 
   useEffect(() => {
     async function load() {
@@ -104,6 +106,9 @@ export default function App() {
       </header>
 
       <main className="max-w-6xl mx-auto px-6 py-8">
+        <div className="mb-6">
+          <Clock simulatedNow={simulatedNow} onChange={setSimulatedNow} />
+        </div>
         <div className="mb-8">
           <ChallengeStatus userId={selectedUserId} />
         </div>
@@ -151,6 +156,7 @@ export default function App() {
                   reminders={reminders}
                   loading={loadingReminders}
                   onConfirmed={handleConfirmed}
+                  simulatedNow={simulatedNow}
                 />
               </section>
 

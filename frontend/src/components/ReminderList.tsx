@@ -6,9 +6,11 @@ interface ReminderListProps {
   reminders: Reminder[];
   loading: boolean;
   onConfirmed: () => void;
+  simulatedNow: Date;
 }
 
 const SNOOZE_MINUTES = 15;
+const FIRING_GRACE_MS = 30 * 60_000; // 30 min after scheduled = firing window
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', {
@@ -17,14 +19,74 @@ function formatTime(iso: string) {
   });
 }
 
-const statusBadge: Record<string, string> = {
-  PENDING: 'bg-amber-50 text-amber-700 border-amber-200',
+function formatRelative(deltaMs: number): string {
+  const abs = Math.abs(deltaMs);
+  const totalMinutes = Math.round(abs / 60_000);
+  if (totalMinutes < 1) return 'now';
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+type DisplayState =
+  | { kind: 'UPCOMING'; minutesUntil: number }
+  | { kind: 'FIRING'; minutesSince: number }
+  | { kind: 'OVERDUE'; minutesSince: number }
+  | { kind: 'TAKEN' }
+  | { kind: 'MISSED' }
+  | { kind: 'SKIPPED' };
+
+function computeDisplayState(r: Reminder, simulatedNow: Date): DisplayState {
+  if (r.status === 'TAKEN') return { kind: 'TAKEN' };
+  if (r.status === 'MISSED') return { kind: 'MISSED' };
+  if (r.status === 'SKIPPED') return { kind: 'SKIPPED' };
+  // PENDING — derive from clock
+  const scheduledMs = new Date(r.scheduledFor).getTime();
+  const nowMs = simulatedNow.getTime();
+  const delta = nowMs - scheduledMs;
+  if (delta < 0) {
+    return { kind: 'UPCOMING', minutesUntil: Math.round(-delta / 60_000) };
+  }
+  if (delta < FIRING_GRACE_MS) {
+    return { kind: 'FIRING', minutesSince: Math.round(delta / 60_000) };
+  }
+  return { kind: 'OVERDUE', minutesSince: Math.round(delta / 60_000) };
+}
+
+const badgeStyle: Record<DisplayState['kind'], string> = {
+  UPCOMING: 'bg-slate-50 text-slate-600 border-slate-200',
+  FIRING: 'bg-amber-100 text-amber-800 border-amber-300 ring-2 ring-amber-200',
+  OVERDUE: 'bg-rose-50 text-rose-700 border-rose-200',
   TAKEN: 'bg-emerald-50 text-emerald-700 border-emerald-200',
   MISSED: 'bg-rose-50 text-rose-700 border-rose-200',
   SKIPPED: 'bg-slate-100 text-slate-600 border-slate-200',
 };
 
-export function ReminderList({ reminders, loading, onConfirmed }: ReminderListProps) {
+function badgeText(s: DisplayState): string {
+  switch (s.kind) {
+    case 'UPCOMING':
+      return `UPCOMING in ${formatRelative(s.minutesUntil * 60_000)}`;
+    case 'FIRING':
+      return `🔔 FIRING NOW${s.minutesSince > 0 ? ` (${s.minutesSince}m)` : ''}`;
+    case 'OVERDUE':
+      return `⚠ OVERDUE by ${formatRelative(s.minutesSince * 60_000)}`;
+    case 'TAKEN':
+      return 'TAKEN';
+    case 'MISSED':
+      return 'MISSED';
+    case 'SKIPPED':
+      return 'SKIPPED';
+  }
+}
+
+export function ReminderList({
+  reminders,
+  loading,
+  onConfirmed,
+  simulatedNow,
+}: ReminderListProps) {
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [snoozingId, setSnoozingId] = useState<string | null>(null);
   const [snoozeLocked, setSnoozeLocked] = useState<Record<string, boolean>>({});
@@ -82,11 +144,16 @@ export function ReminderList({ reminders, loading, onConfirmed }: ReminderListPr
 
   return (
     <div className="space-y-3">
-      {reminders.map((r) => (
+      {reminders.map((r) => {
+        const display = computeDisplayState(r, simulatedNow);
+        const isFiring = display.kind === 'FIRING';
+        return (
         <div
           key={r.id}
-          className="bg-white rounded-xl p-5 border border-slate-200
-                     hover:border-slate-300 transition-all duration-150"
+          className={`bg-white rounded-xl p-5 border transition-all duration-150
+                     ${isFiring
+                       ? 'border-amber-300 shadow-md shadow-amber-100'
+                       : 'border-slate-200 hover:border-slate-300'}`}
         >
           <div className="flex justify-between items-start gap-4">
             <div className="flex-1">
@@ -95,9 +162,9 @@ export function ReminderList({ reminders, loading, onConfirmed }: ReminderListPr
                   {formatTime(r.scheduledFor)}
                 </span>
                 <span
-                  className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${statusBadge[r.status]}`}
+                  className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${badgeStyle[display.kind]}`}
                 >
-                  {r.status}
+                  {badgeText(display)}
                 </span>
               </div>
               <h3 className="font-semibold text-slate-900 text-lg mt-2">
@@ -147,7 +214,8 @@ export function ReminderList({ reminders, loading, onConfirmed }: ReminderListPr
             )}
           </div>
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
