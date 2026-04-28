@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import type { User, Reminder, Schedule } from './types';
-import { fetchUsers, fetchTodayReminders, fetchUserSchedules } from './api';
+import { fetchUsers, fetchFiringReminders, fetchUserSchedules } from './api';
 import { UserSelect } from './components/UserSelect';
 import { ReminderList } from './components/ReminderList';
 import { ScheduleList } from './components/ScheduleList';
@@ -33,43 +33,53 @@ export default function App() {
     load();
   }, []);
 
+  // Schedules load once per user — they don't depend on the simulated clock.
   useEffect(() => {
     if (!selectedUserId) {
-      setReminders([]);
       setSchedules([]);
       return;
     }
     let cancelled = false;
-    async function load() {
-      setLoadingReminders(true);
-      setLoadingSchedules(true);
-      try {
-        const [remRes, schedRes] = await Promise.all([
-          fetchTodayReminders(selectedUserId!),
-          fetchUserSchedules(selectedUserId!),
-        ]);
-        if (!cancelled) {
-          setReminders(remRes.reminders || []);
-          setSchedules(schedRes);
-        }
-      } catch (err) {
-        console.error('Failed to load:', err);
-        if (!cancelled) {
-          setReminders([]);
-          setSchedules([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingReminders(false);
-          setLoadingSchedules(false);
-        }
-      }
-    }
-    load();
+    setLoadingSchedules(true);
+    fetchUserSchedules(selectedUserId)
+      .then((data) => {
+        if (!cancelled) setSchedules(data);
+      })
+      .catch((err) => {
+        console.error('Failed to load schedules:', err);
+        if (!cancelled) setSchedules([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingSchedules(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [selectedUserId, refreshKey]);
+  }, [selectedUserId]);
+
+  // Firing reminders refetch on every clock change OR after confirm/snooze.
+  useEffect(() => {
+    if (!selectedUserId) {
+      setReminders([]);
+      return;
+    }
+    let cancelled = false;
+    setLoadingReminders(true);
+    fetchFiringReminders(selectedUserId, simulatedNow)
+      .then((res) => {
+        if (!cancelled) setReminders(res.reminders || []);
+      })
+      .catch((err) => {
+        console.error('Failed to load firing reminders:', err);
+        if (!cancelled) setReminders([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingReminders(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedUserId, simulatedNow, refreshKey]);
 
   const handleConfirmed = useCallback(() => {
     setRefreshKey((k) => k + 1);
@@ -142,10 +152,23 @@ export default function App() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <section>
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">
+                Active Schedules
+              </h2>
+              <ScheduleList schedules={schedules} loading={loadingSchedules} />
+            </section>
+
+            {(reminders.length > 0 || loadingReminders) && (
               <section>
                 <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-lg font-semibold text-slate-900">Today's Reminders</h2>
+                  <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                    Firing Now
+                    <span className="text-sm font-normal text-slate-500">
+                      ({reminders.length})
+                    </span>
+                  </h2>
                   {loadingReminders && (
                     <span className="text-sm text-slate-500 animate-pulse">
                       Loading...
@@ -159,18 +182,12 @@ export default function App() {
                   simulatedNow={simulatedNow}
                 />
               </section>
+            )}
 
-              <section className="space-y-6">
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900 mb-4">Adherence</h2>
-                  <AdherenceSection userId={selectedUserId} refreshTrigger={refreshKey} />
-                </div>
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900 mb-4">Active Schedules</h2>
-                  <ScheduleList schedules={schedules} loading={loadingSchedules} />
-                </div>
-              </section>
-            </div>
+            <section>
+              <h2 className="text-lg font-semibold text-slate-900 mb-4">Adherence</h2>
+              <AdherenceSection userId={selectedUserId} refreshTrigger={refreshKey} />
+            </section>
           </div>
         )}
       </main>

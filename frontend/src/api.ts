@@ -1,7 +1,7 @@
 import type {
   User,
   Schedule,
-  TodayReminders,
+  FiringReminders,
   AdherenceResponse,
 } from './types';
 
@@ -19,11 +19,15 @@ export async function fetchUserSchedules(userId: string): Promise<Schedule[]> {
   return res.json();
 }
 
-export async function fetchTodayReminders(
+export async function fetchFiringReminders(
   userId: string,
-): Promise<TodayReminders> {
-  const res = await fetch(`${API_BASE}/users/${userId}/reminders/today`);
-  if (!res.ok) throw new Error('Failed to fetch reminders');
+  now: Date,
+): Promise<FiringReminders> {
+  const url = `${API_BASE}/users/${userId}/reminders/firing?now=${encodeURIComponent(
+    now.toISOString(),
+  )}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Failed to fetch firing reminders');
   return res.json();
 }
 

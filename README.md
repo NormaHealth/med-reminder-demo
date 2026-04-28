@@ -32,20 +32,23 @@ The frontend runs on http://localhost:5173
 
 - `GET /users` — list patients
 - `GET /users/:id/schedules` — patient's medication schedules
-- `GET /users/:id/reminders/today` — today's dose events with refill status
+- `GET /users/:id/reminders/firing?now=<ISO>` — reminders currently firing at `now` (PENDING doses with `scheduledFor` in `[now − 30m, now]`); lazy-creates dose records as schedules enter the firing window
 - `POST /reminders/:id/confirm` — confirm a dose was taken
 - `POST /reminders/:id/snooze` — *(does not exist yet — Challenge 2)*
 - `GET /users/:id/adherence` — *(does not exist yet — Challenge 3)*
 
 ## Simulated Clock
 
-The frontend has a **Simulated Clock** widget at the top of the page. Use the time picker or the stepper buttons (`-1h / -15m / +15m / +1h / +4h`) to scrub the UI's view of "now". `PENDING` reminders derive their display state from this clock:
+When the API starts, **there are no active reminders** — only historical dose events (past 30 days) for adherence. Reminders come into existence when a schedule's time enters the firing window.
 
-- **UPCOMING** — `scheduledFor` is in the future relative to the simulated clock.
-- **🔔 FIRING NOW** — within 30 minutes after `scheduledFor`.
-- **⚠ OVERDUE** — more than 30 minutes past `scheduledFor`.
+The frontend has a **Simulated Clock** widget at the top of the page. Use the time picker or the stepper buttons (`-1h / -15m / +15m / +1h / +4h`) to scrub time. The clock is sent to the backend as `?now=<ISO>` on every firing-reminders fetch, so:
 
-The clock is purely a frontend display tool — the backend always uses real wall-clock time. This lets you demo the snooze flow visibly: set the clock to 8:05 AM, watch Eleanor's 8:00 Lisinopril fire, click **Snooze 15m**, advance the clock, see it stop firing and then fire again.
+- Set the clock to 7:55 AM → no schedules in window → "Firing Now" section is hidden.
+- Step to 8:05 AM → Eleanor's 8:00 Lisinopril fires (a dose record gets lazy-created).
+- Click **Snooze 15m** → `scheduledFor` advances to 8:15 → the dose drops out of the firing window.
+- Step to 8:20 AM → it fires again.
+
+The clock only shapes the *firing window* — adherence and confirm still use real wall-clock time on the backend.
 
 ## Validation Panel
 

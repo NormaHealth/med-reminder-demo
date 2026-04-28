@@ -34,8 +34,9 @@ export interface Reminder {
   refillStatus: RefillStatus;
 }
 
-export interface TodayReminders {
+export interface FiringReminders {
   userId: string;
+  now: string;
   reminders: Reminder[];
 }
 

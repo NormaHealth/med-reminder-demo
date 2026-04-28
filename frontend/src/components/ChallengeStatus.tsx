@@ -58,30 +58,77 @@ export function ChallengeStatus({ userId }: ChallengeStatusProps) {
       });
     }
 
-    // Challenge 2: snooze a PENDING reminder by 30 min, verify scheduledFor
+    // Challenge 2: snooze a firing reminder by 30 min, verify scheduledFor
     // advanced; then verify a bad payload is rejected with 4xx.
+    //
+    // The probe drives the simulated clock itself: it picks a daily schedule
+    // for this user, computes a `now` 5 min after one of the schedule's fire
+    // times, and queries /reminders/firing?now=<that> — which lazy-creates a
+    // PENDING dose in the firing window.
     update('c2', { state: 'running', detail: 'Probing snooze endpoint...' });
     try {
-      const todayRes = await fetch(
-        `${API_BASE_URL}/users/${userId}/reminders/today`,
-      );
-      if (!todayRes.ok) {
+      const schedRes = await fetch(`${API_BASE_URL}/users/${userId}/schedules`);
+      if (!schedRes.ok) {
         update('c2', {
           state: 'fail',
-          detail: `Could not load today's reminders (${todayRes.status}).`,
+          detail: `Could not load schedules (${schedRes.status}).`,
         });
-      } else {
-        const todayBody = await todayRes.json();
-        const reminders: Array<{ id: string; status: string; scheduledFor: string }> =
-          todayBody.reminders ?? [];
-        const target = reminders.find((r) => r.status === 'PENDING');
-        if (!target) {
-          update('c2', {
-            state: 'fail',
-            detail:
-              'No PENDING reminder available to snooze. Restart the API to reseed.',
-          });
-        } else {
+        setRunning(false);
+        return;
+      }
+      const schedules: Array<{
+        id: string;
+        timesOfDay: string[];
+        daysOfWeek: number[] | null;
+      }> = await schedRes.json();
+      const today = new Date();
+      const dailySchedule = schedules.find(
+        (s) =>
+          (s.daysOfWeek === null || s.daysOfWeek.includes(today.getDay())) &&
+          s.timesOfDay.length > 0,
+      );
+      if (!dailySchedule) {
+        update('c2', {
+          state: 'fail',
+          detail: 'No active schedule fires today for this patient.',
+        });
+        setRunning(false);
+        return;
+      }
+      const [hh, mm] = dailySchedule.timesOfDay[0].split(':').map(Number);
+      const fireAt = new Date(today);
+      fireAt.setHours(hh, mm, 0, 0);
+      // 5 min after the schedule fires — well inside the 30-min firing window.
+      const probeNow = new Date(fireAt.getTime() + 5 * 60_000);
+      const firingUrl = `${API_BASE_URL}/users/${userId}/reminders/firing?now=${encodeURIComponent(
+        probeNow.toISOString(),
+      )}`;
+      const firingRes = await fetch(firingUrl);
+      if (!firingRes.ok) {
+        update('c2', {
+          state: 'fail',
+          detail: `GET /reminders/firing returned ${firingRes.status}.`,
+        });
+        setRunning(false);
+        return;
+      }
+      const firingBody = await firingRes.json();
+      const reminders: Array<{
+        id: string;
+        status: string;
+        scheduledFor: string;
+      }> = firingBody.reminders ?? [];
+      const target = reminders.find((r) => r.status === 'PENDING');
+      if (!target) {
+        update('c2', {
+          state: 'fail',
+          detail:
+            'Firing endpoint returned no PENDING reminder for the probed time.',
+        });
+        setRunning(false);
+        return;
+      }
+      {
           const originalMs = new Date(target.scheduledFor).getTime();
           const snoozeMinutes = 30;
           const happyRes = await fetch(
@@ -133,7 +180,6 @@ export function ChallengeStatus({ userId }: ChallengeStatusProps) {
               }
             }
           }
-        }
       }
     } catch (e) {
       update('c2', {

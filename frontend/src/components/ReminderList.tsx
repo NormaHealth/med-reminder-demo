@@ -10,7 +10,6 @@ interface ReminderListProps {
 }
 
 const SNOOZE_MINUTES = 15;
-const FIRING_GRACE_MS = 30 * 60_000; // 30 min after scheduled = firing window
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', {
@@ -19,66 +18,11 @@ function formatTime(iso: string) {
   });
 }
 
-function formatRelative(deltaMs: number): string {
-  const abs = Math.abs(deltaMs);
-  const totalMinutes = Math.round(abs / 60_000);
-  if (totalMinutes < 1) return 'now';
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
-  if (h === 0) return `${m}m`;
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
-}
-
-type DisplayState =
-  | { kind: 'UPCOMING'; minutesUntil: number }
-  | { kind: 'FIRING'; minutesSince: number }
-  | { kind: 'OVERDUE'; minutesSince: number }
-  | { kind: 'TAKEN' }
-  | { kind: 'MISSED' }
-  | { kind: 'SKIPPED' };
-
-function computeDisplayState(r: Reminder, simulatedNow: Date): DisplayState {
-  if (r.status === 'TAKEN') return { kind: 'TAKEN' };
-  if (r.status === 'MISSED') return { kind: 'MISSED' };
-  if (r.status === 'SKIPPED') return { kind: 'SKIPPED' };
-  // PENDING — derive from clock
-  const scheduledMs = new Date(r.scheduledFor).getTime();
-  const nowMs = simulatedNow.getTime();
-  const delta = nowMs - scheduledMs;
-  if (delta < 0) {
-    return { kind: 'UPCOMING', minutesUntil: Math.round(-delta / 60_000) };
-  }
-  if (delta < FIRING_GRACE_MS) {
-    return { kind: 'FIRING', minutesSince: Math.round(delta / 60_000) };
-  }
-  return { kind: 'OVERDUE', minutesSince: Math.round(delta / 60_000) };
-}
-
-const badgeStyle: Record<DisplayState['kind'], string> = {
-  UPCOMING: 'bg-slate-50 text-slate-600 border-slate-200',
-  FIRING: 'bg-amber-100 text-amber-800 border-amber-300 ring-2 ring-amber-200',
-  OVERDUE: 'bg-rose-50 text-rose-700 border-rose-200',
-  TAKEN: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-  MISSED: 'bg-rose-50 text-rose-700 border-rose-200',
-  SKIPPED: 'bg-slate-100 text-slate-600 border-slate-200',
-};
-
-function badgeText(s: DisplayState): string {
-  switch (s.kind) {
-    case 'UPCOMING':
-      return `UPCOMING in ${formatRelative(s.minutesUntil * 60_000)}`;
-    case 'FIRING':
-      return `🔔 FIRING NOW${s.minutesSince > 0 ? ` (${s.minutesSince}m)` : ''}`;
-    case 'OVERDUE':
-      return `⚠ OVERDUE by ${formatRelative(s.minutesSince * 60_000)}`;
-    case 'TAKEN':
-      return 'TAKEN';
-    case 'MISSED':
-      return 'MISSED';
-    case 'SKIPPED':
-      return 'SKIPPED';
-  }
+function minutesSince(iso: string, now: Date): number {
+  return Math.max(
+    0,
+    Math.round((now.getTime() - new Date(iso).getTime()) / 60_000),
+  );
 }
 
 export function ReminderList({
@@ -122,65 +66,60 @@ export function ReminderList({
   if (loading) {
     return (
       <div className="space-y-3">
-        {[1, 2, 3].map((i) => (
-          <div key={i} className="animate-pulse bg-white rounded-xl p-5 border border-slate-200">
-            <div className="space-y-2">
-              <div className="h-5 bg-slate-200 rounded w-32"></div>
-              <div className="h-4 bg-slate-100 rounded w-48"></div>
-            </div>
+        <div className="animate-pulse bg-white rounded-xl p-5 border border-slate-200">
+          <div className="space-y-2">
+            <div className="h-5 bg-slate-200 rounded w-32"></div>
+            <div className="h-4 bg-slate-100 rounded w-48"></div>
           </div>
-        ))}
+        </div>
       </div>
     );
   }
 
   if (reminders.length === 0) {
-    return (
-      <div className="text-center py-12 bg-white rounded-xl border border-slate-200">
-        <div className="text-slate-400 text-lg">No reminders today</div>
-      </div>
-    );
+    return null;
   }
 
   return (
     <div className="space-y-3">
       {reminders.map((r) => {
-        const display = computeDisplayState(r, simulatedNow);
-        const isFiring = display.kind === 'FIRING';
+        const since = minutesSince(r.scheduledFor, simulatedNow);
         return (
-        <div
-          key={r.id}
-          className={`bg-white rounded-xl p-5 border transition-all duration-150
-                     ${isFiring
-                       ? 'border-amber-300 shadow-md shadow-amber-100'
-                       : 'border-slate-200 hover:border-slate-300'}`}
-        >
-          <div className="flex justify-between items-start gap-4">
-            <div className="flex-1">
-              <div className="flex items-center gap-3">
-                <span className="font-mono text-2xl font-semibold text-slate-900">
-                  {formatTime(r.scheduledFor)}
-                </span>
-                <span
-                  className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${badgeStyle[display.kind]}`}
-                >
-                  {badgeText(display)}
-                </span>
-              </div>
-              <h3 className="font-semibold text-slate-900 text-lg mt-2">
-                {r.medication.name}
-                <span className="ml-2 font-mono text-sm text-teal-700 bg-teal-50 px-2 py-0.5 rounded">
-                  {r.dosage}
-                </span>
-              </h3>
-              <p className="text-sm text-slate-500 mt-1">{r.medication.instructions}</p>
-              {r.refillStatus.refillNeeded && (
-                <p className="text-xs text-amber-700 mt-2">
-                  Refill needed — {r.refillStatus.daysSupplyRemaining} days left at {r.refillStatus.pharmacy}
+          <div
+            key={r.id}
+            className="bg-white rounded-xl p-5 border border-amber-300
+                       shadow-md shadow-amber-100 transition-all duration-150"
+          >
+            <div className="flex justify-between items-start gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-2xl font-semibold text-slate-900">
+                    {formatTime(r.scheduledFor)}
+                  </span>
+                  <span
+                    className="inline-flex items-center px-2.5 py-0.5 rounded-full
+                               text-xs font-medium border bg-amber-100 text-amber-800
+                               border-amber-300 ring-2 ring-amber-200"
+                  >
+                    🔔 FIRING NOW{since > 0 ? ` (${since}m)` : ''}
+                  </span>
+                </div>
+                <h3 className="font-semibold text-slate-900 text-lg mt-2">
+                  {r.medication.name}
+                  <span className="ml-2 font-mono text-sm text-teal-700 bg-teal-50 px-2 py-0.5 rounded">
+                    {r.dosage}
+                  </span>
+                </h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  {r.medication.instructions}
                 </p>
-              )}
-            </div>
-            {r.status === 'PENDING' && (
+                {r.refillStatus.refillNeeded && (
+                  <p className="text-xs text-amber-700 mt-2">
+                    Refill needed — {r.refillStatus.daysSupplyRemaining} days
+                    left at {r.refillStatus.pharmacy}
+                  </p>
+                )}
+              </div>
               <div className="flex flex-col gap-2 items-stretch">
                 <button
                   onClick={() => handleConfirm(r.id)}
@@ -211,9 +150,8 @@ export function ReminderList({
                   </button>
                 )}
               </div>
-            )}
+            </div>
           </div>
-        </div>
         );
       })}
     </div>

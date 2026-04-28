@@ -73,14 +73,16 @@ export class SeedService {
       );
     }
 
-    // Materialize 30 days of past doses + today's pending doses.
-    // Adherence pattern: ~85% taken, ~10% missed, ~5% skipped, today all PENDING.
+    // Materialize ONLY past historical dose events. Today's reminders are
+    // not pre-created — they're lazy-materialized on demand by the firing
+    // endpoint when a schedule's time enters the firing window.
+    // Adherence pattern: ~85% taken, ~10% missed, ~5% skipped.
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     let doseId = 1;
     for (const s of schedules) {
-      for (let dayOffset = -30; dayOffset <= 0; dayOffset++) {
+      for (let dayOffset = -30; dayOffset <= -1; dayOffset++) {
         const day = new Date(today);
         day.setDate(day.getDate() + dayOffset);
         if (s.daysOfWeek && !s.daysOfWeek.includes(day.getDay())) continue;
@@ -91,20 +93,16 @@ export class SeedService {
 
           let status: DoseStatus;
           let confirmedAt: Date | null = null;
-          if (dayOffset === 0) {
-            status = 'PENDING';
+          const r = pseudoRandom(`${s.id}-${dayOffset}-${time}`);
+          if (r < 0.85) {
+            status = 'TAKEN';
+            const confirmed = new Date(scheduledFor);
+            confirmed.setMinutes(confirmed.getMinutes() + Math.floor(r * 100) % 45);
+            confirmedAt = confirmed;
+          } else if (r < 0.95) {
+            status = 'MISSED';
           } else {
-            const r = pseudoRandom(`${s.id}-${dayOffset}-${time}`);
-            if (r < 0.85) {
-              status = 'TAKEN';
-              const confirmed = new Date(scheduledFor);
-              confirmed.setMinutes(confirmed.getMinutes() + Math.floor(r * 100) % 45);
-              confirmedAt = confirmed;
-            } else if (r < 0.95) {
-              status = 'MISSED';
-            } else {
-              status = 'SKIPPED';
-            }
+            status = 'SKIPPED';
           }
 
           await this.doseRepository.save(
@@ -120,7 +118,7 @@ export class SeedService {
       }
     }
 
-    console.log('Database seeded successfully');
+    console.log('Database seeded successfully (no active reminders at boot)');
   }
 }
 
